@@ -1,0 +1,78 @@
+name: Build ZeroFIDO iOS NFC lean v4
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      UV_PYTHON: "3.14"
+      ZEROFIDO_PROFILE: "nfc"
+      ZEROFIDO_RELEASE_DIAGNOSTICS: "0"
+      ZEROFIDO_USB_DIAGNOSTICS: "0"
+      ZEROFIDO_AUTO_ACCEPT_REQUESTS: "0"
+      ZEROFIDO_DEV_SCREENSHOT: "0"
+      ZEROFIDO_DEV_FIDO2_1: "0"
+      ZEROFIDO_PACKED_ATTESTATION: "0"
+
+    steps:
+      - name: Check out build helper
+        uses: actions/checkout@v6.0.2
+        with:
+          path: builder
+
+      - name: Check out ZeroFIDO
+        uses: actions/checkout@v6.0.2
+        with:
+          repository: MinorGlitch/zerofido
+          ref: master
+          path: zerofido
+
+      - name: Apply lean NFC patch
+        working-directory: zerofido
+        run: python3 ../builder/patch_zerofido_ios_nfc_lean_v4.py
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: zerofido/uv.lock
+
+      - name: Install Python
+        run: uv python install 3.14
+
+      - name: Sync tools
+        working-directory: zerofido
+        run: uv sync --locked
+
+      - name: Build NFC-only profile
+        working-directory: zerofido
+        run: uv run python -m ufbt
+
+      - name: Package release FAP
+        working-directory: zerofido
+        run: >
+          uv run python host_tools/package_release.py
+          --skip-build
+          --allow-prebuilt-input
+          --fap dist/zerofido.fap
+          --output-fap dist/zerofido-ios-nfc-lean-v4.fap
+
+      - name: Hash artifact
+        working-directory: zerofido
+        run: sha256sum dist/zerofido-ios-nfc-lean-v4.fap > dist/SHA256SUMS-ios-nfc-lean-v4.txt
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: zerofido-ios-nfc-lean-v4
+          if-no-files-found: error
+          path: |
+            zerofido/dist/zerofido-ios-nfc-lean-v4.fap
+            zerofido/dist/SHA256SUMS-ios-nfc-lean-v4.txt
