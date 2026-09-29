@@ -2,8 +2,7 @@ name: Temp ZeroFIDO security-key build
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
 
 permissions:
   contents: read
@@ -13,8 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      UV_PYTHON: "3.14"
-      ZEROFIDO_PROFILE: "full"
+      ZEROFIDO_PROFILE: full
       ZEROFIDO_RELEASE_DIAGNOSTICS: "0"
       ZEROFIDO_USB_DIAGNOSTICS: "0"
       ZEROFIDO_AUTO_ACCEPT_REQUESTS: "0"
@@ -24,14 +22,13 @@ jobs:
       ZEROFIDO_SECURITY_KEY_ONLY: "1"
 
     steps:
-      - name: Check out ZeroFIDO
-        uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v4
         with:
           repository: MinorGlitch/zerofido
           ref: master
           path: zerofido
 
-      - name: Apply security-key-only patch
+      - name: Patch ZeroFIDO
         working-directory: zerofido
         run: |
           python3 - <<'PY'
@@ -39,73 +36,56 @@ jobs:
 
           p = Path("application.fam")
           s = p.read_text()
-          s = s.replace(
-              'dev_fido2_1 = env_flag("ZEROFIDO_DEV_FIDO2_1", False)\npacked_attestation = env_flag("ZEROFIDO_PACKED_ATTESTATION", True)',
-              'dev_fido2_1 = env_flag("ZEROFIDO_DEV_FIDO2_1", False)\nsecurity_key_only = env_flag("ZEROFIDO_SECURITY_KEY_ONLY", False)\npacked_attestation = env_flag("ZEROFIDO_PACKED_ATTESTATION", True)',
-              1,
-          )
-          s = s.replace(
-              '    f"ZF_DEV_FIDO2_1={1 if dev_fido2_1 else 0}",\n    f"ZF_PACKED_ATTESTATION={1 if packed_attestation else 0}",',
-              '    f"ZF_DEV_FIDO2_1={1 if dev_fido2_1 else 0}",\n    f"ZF_SECURITY_KEY_ONLY={1 if security_key_only else 0}",\n    f"ZF_PACKED_ATTESTATION={1 if packed_attestation else 0}",',
-              1,
-          )
-          p.write_text(s)
+          a = 'dev_fido2_1 = env_flag("ZEROFIDO_DEV_FIDO2_1", False)\npacked_attestation = env_flag("ZEROFIDO_PACKED_ATTESTATION", True)'
+          b = 'dev_fido2_1 = env_flag("ZEROFIDO_DEV_FIDO2_1", False)\nsecurity_key_only = env_flag("ZEROFIDO_SECURITY_KEY_ONLY", False)\npacked_attestation = env_flag("ZEROFIDO_PACKED_ATTESTATION", True)'
+          assert a in s
+          s = s.replace(a, b, 1)
+          a = '    f"ZF_DEV_FIDO2_1={1 if dev_fido2_1 else 0}",\n    f"ZF_PACKED_ATTESTATION={1 if packed_attestation else 0}",'
+          b = '    f"ZF_DEV_FIDO2_1={1 if dev_fido2_1 else 0}",\n    f"ZF_SECURITY_KEY_ONLY={1 if security_key_only else 0}",\n    f"ZF_PACKED_ATTESTATION={1 if packed_attestation else 0}",'
+          assert a in s
+          p.write_text(s.replace(a, b, 1))
 
           p = Path("src/ctap/response.c")
           s = p.read_text()
-          old = '        zf_cbor_encode_text(&enc, "rk") && zf_cbor_encode_bool(&enc, true) &&'
-          new = '''#if defined(ZF_SECURITY_KEY_ONLY) && ZF_SECURITY_KEY_ONLY
+          a = '        zf_cbor_encode_text(&enc, "rk") && zf_cbor_encode_bool(&enc, true) &&'
+          b = '''#if defined(ZF_SECURITY_KEY_ONLY) && ZF_SECURITY_KEY_ONLY
         zf_cbor_encode_text(&enc, "rk") && zf_cbor_encode_bool(&enc, false) &&
 #else
         zf_cbor_encode_text(&enc, "rk") && zf_cbor_encode_bool(&enc, true) &&
 #endif'''
-          assert old in s
-          p.write_text(s.replace(old, new, 1))
+          assert a in s
+          p.write_text(s.replace(a, b, 1))
 
           p = Path("src/ctap/commands/make_credential.c")
           s = p.read_text()
-          old = '    resident_key = scratch->request.has_rk && scratch->request.rk;'
-          new = '''    resident_key = scratch->request.has_rk && scratch->request.rk;
+          a = '    resident_key = scratch->request.has_rk && scratch->request.rk;'
+          b = '''    resident_key = scratch->request.has_rk && scratch->request.rk;
 #if defined(ZF_SECURITY_KEY_ONLY) && ZF_SECURITY_KEY_ONLY
     if (resident_key) {
         status = ZF_CTAP_ERR_UNSUPPORTED_OPTION;
         goto cleanup;
     }
 #endif'''
-          assert old in s
-          p.write_text(s.replace(old, new, 1))
+          assert a in s
+          p.write_text(s.replace(a, b, 1))
           PY
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v8.1.0
-        with:
-          enable-cache: true
-          cache-dependency-glob: zerofido/uv.lock
+      - name: Install uFBT
+        run: python3 -m pip install --user ufbt==0.2.6
 
-      - name: Install Python
-        run: uv python install 3.14
-
-      - name: Sync tools
+      - name: Build full USB + NFC FAP
         working-directory: zerofido
-        run: uv sync --locked
+        run: python3 -m ufbt
 
-      - name: Build
+      - name: Copy artifact
         working-directory: zerofido
-        run: uv run python -m ufbt
+        run: |
+          cp dist/zerofido.fap dist/zerofido-security-key-full.fap
+          sha256sum dist/zerofido-security-key-full.fap > dist/SHA256SUMS-security-key.txt
 
-      - name: Package
-        working-directory: zerofido
-        run: uv run python host_tools/package_release.py --skip-build --allow-prebuilt-input --fap dist/zerofido.fap --output-fap dist/zerofido-security-key-full.fap
-
-      - name: Hash
-        working-directory: zerofido
-        run: sha256sum dist/zerofido-security-key-full.fap > dist/SHA256SUMS-security-key.txt
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@v4
         with:
           name: zerofido-security-key-full
-          if-no-files-found: error
           path: |
             zerofido/dist/zerofido-security-key-full.fap
             zerofido/dist/SHA256SUMS-security-key.txt
