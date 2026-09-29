@@ -35,8 +35,9 @@ jobs:
           ref: master
           path: zerofido
 
-      - name: Apply security-key patch
-        run: git -C zerofido apply ../builder/zerofido-security-key-only.patch
+      - name: Apply security-key source edits
+        working-directory: zerofido
+        run: python3 ../builder/patch_zerofido_security_key.py
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v8.1.0
