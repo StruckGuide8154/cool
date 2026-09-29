@@ -1,0 +1,49 @@
+diff --git a/application.fam b/application.fam
+--- a/application.fam
++++ b/application.fam
+@@ -20,6 +20,7 @@ usb_diagnostics = env_flag("ZEROFIDO_USB_DIAGNOSTICS", False)
+ auto_accept_requests = env_flag("ZEROFIDO_AUTO_ACCEPT_REQUESTS", False)
+ dev_screenshot = env_flag("ZEROFIDO_DEV_SCREENSHOT", False)
+ dev_fido2_1 = env_flag("ZEROFIDO_DEV_FIDO2_1", False)
++security_key_only = env_flag("ZEROFIDO_SECURITY_KEY_ONLY", False)
+ packed_attestation = env_flag("ZEROFIDO_PACKED_ATTESTATION", True)
+ 
+ cdefines = [
+@@ -30,6 +31,7 @@ cdefines = [
+     f"ZF_AUTO_ACCEPT_REQUESTS={1 if auto_accept_requests else 0}",
+     f"ZF_DEV_SCREENSHOT={1 if dev_screenshot else 0}",
+     f"ZF_DEV_FIDO2_1={1 if dev_fido2_1 else 0}",
++    f"ZF_SECURITY_KEY_ONLY={1 if security_key_only else 0}",
+     f"ZF_PACKED_ATTESTATION={1 if packed_attestation else 0}",
+ ]
+diff --git a/src/ctap/response.c b/src/ctap/response.c
+--- a/src/ctap/response.c
++++ b/src/ctap/response.c
+@@ -190,7 +190,11 @@ uint8_t zf_ctap_build_get_info_response(const ZfResolvedCapabilities *capabiliti
+         zf_cbor_encode_text(&enc, "credProtect") && zf_cbor_encode_text(&enc, "hmac-secret") &&
+         zf_cbor_encode_uint(&enc, 3) && zf_cbor_encode_bytes(&enc, aaguid, ZF_AAGUID_LEN) &&
+         zf_cbor_encode_uint(&enc, 4) && zf_cbor_encode_map(&enc, options_count) &&
++#if defined(ZF_SECURITY_KEY_ONLY) && ZF_SECURITY_KEY_ONLY
++        zf_cbor_encode_text(&enc, "rk") && zf_cbor_encode_bool(&enc, false) &&
++#else
+         zf_cbor_encode_text(&enc, "rk") && zf_cbor_encode_bool(&enc, true) &&
++#endif
+         zf_cbor_encode_text(&enc, "up") && zf_cbor_encode_bool(&enc, true) &&
+         zf_cbor_encode_text(&enc, "plat") && zf_cbor_encode_bool(&enc, false) &&
+         zf_cbor_encode_text(&enc, "clientPin") && zf_cbor_encode_bool(&enc, client_pin_set) &&
+diff --git a/src/ctap/commands/make_credential.c b/src/ctap/commands/make_credential.c
+--- a/src/ctap/commands/make_credential.c
++++ b/src/ctap/commands/make_credential.c
+@@ -112,6 +112,12 @@ uint8_t zf_ctap_handle_make_credential(ZerofidoApp *app, ZfTransportSessionId se
+         goto cleanup;
+     }
+     resident_key = scratch->request.has_rk && scratch->request.rk;
++#if defined(ZF_SECURITY_KEY_ONLY) && ZF_SECURITY_KEY_ONLY
++    if (resident_key) {
++        status = ZF_CTAP_ERR_UNSUPPORTED_OPTION;
++        goto cleanup;
++    }
++#endif
+     /*
+      * Several CTAP 2.0 NFC clients recover from PIN_REQUIRED by obtaining a
+      * PIN token, then retry non-resident MakeCredential without pinAuth. Keep
