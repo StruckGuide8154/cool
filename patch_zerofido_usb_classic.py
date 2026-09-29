@@ -22,7 +22,7 @@ p = Path("src/zerofido_types.h")
 s = p.read_text()
 s = s.replace(
 '#define ZF_APP_DATA_DIR ZF_APP_DATA_ROOT "/" ZF_APP_ID',
-'#define ZF_APP_DATA_DIR ZF_APP_DATA_ROOT "/zerofido_usb_classic_6d517a29"',
+'#define ZF_APP_DATA_DIR ZF_APP_DATA_ROOT "/zf6d517a29"',
 1)
 if "zerofido_usb_classic_6d517a29" not in s:
     raise SystemExit("Storage namespace patch failed")
